@@ -31,6 +31,7 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -41,8 +42,10 @@ INSTALLED_APPS = [
     'rest_framework',
     'rest_framework.authtoken', 
     'corsheaders',
+    'channels',
 
     'registration_and_settings',
+    'quiz_master'
 
 ]
 
@@ -83,7 +86,8 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = 'sola_scriptura.wsgi.application'
+ASGI_APPLICATION = 'sola_scriptura.asgi.application'
+
 
 
 # Database
@@ -96,7 +100,11 @@ DATABASES = {
     }
 }
 
-
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels.layers.InMemoryChannelLayer"
+    }
+}
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators
 
