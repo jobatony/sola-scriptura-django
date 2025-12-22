@@ -2,11 +2,27 @@ import random
 import string
 from django.db import models
 from django.contrib.auth.models import User
+from django.conf import settings
+
+from django.contrib.auth.models import AbstractUser
+
+class User(AbstractUser):
+    pass
+    # Add custom fields here if needed, e.g.,
+    # is_moderator = models.BooleanField(default=False)
+
+class UserSettings(models.Model):
+    user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='settings')
+    theme = models.CharField(max_length=20, default='light')
+    notifications_enabled = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.user.username}'s settings"
 
 class Competition(models.Model):
     name = models.CharField(max_length=200)
     church_name = models.CharField(max_length=200)
-    created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='competitions')
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='competitions')
     created_at = models.DateTimeField(auto_now_add=True)
     is_active = models.BooleanField(default=False)
     number_of_rounds = models.IntegerField(default=3)

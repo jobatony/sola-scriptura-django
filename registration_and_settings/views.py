@@ -1,26 +1,51 @@
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, permissions, status, generics
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
-from django.contrib.auth import authenticate
-from rest_framework.authtoken.models import Token
-from .models import Competition, Participant
-from .serializers import CompetitionSerializer, ParticipantSerializer
 
+from rest_framework.authtoken.models import Token
+from .models import Competition, Participant, UserSettings
+from .serializers import CompetitionSerializer, ParticipantSerializer, UserSerializer, LoginSerializer, UserSettingsSerializer
+
+from django.contrib.auth import authenticate, login, logout
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
+
+class RegisterView(generics.CreateAPIView):
+    serializer_class = UserSerializer
+    permission_classes = [permissions.AllowAny]
+
+# Exempting CSRF for login to allow easy testing from external React app
+# In production, consider using DRF Tokens or passing the CSRF cookie
+@method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
 
     def post(self, request):
-        username = request.data.get("username")
-        password = request.data.get("password")
-        user = authenticate(username=username, password=password)
-        if user:
-            token, _ = Token.objects.get_or_create(user=user)
-            return Response({"token": token.key, "username": user.username})
-        else:
-            return Response({"error": "Wrong Credentials"}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = LoginSerializer(data=request.data)
+        if serializer.is_valid():
+            user = authenticate(
+                username=serializer.validated_data['username'],
+                password=serializer.validated_data['password']
+            )
+            if user:
+                login(request, user)
+                return Response(UserSerializer(user).data)
+            return Response({"error": "Invalid credentials"}, status=400)
+        return Response(serializer.errors, status=400)
 
+class LogoutView(APIView):
+    def post(self, request):
+        logout(request)
+        return Response({"message": "Logged out successfully"})
+
+class UserSettingsView(generics.RetrieveUpdateAPIView):
+    serializer_class = UserSettingsSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_object(self):
+        return UserSettings.objects.get_or_create(user=self.request.user)[0]
 class CompetitionViewSet(viewsets.ModelViewSet):
     """
     API endpoint that allows competitions to be viewed or edited.
