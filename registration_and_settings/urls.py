@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import CompetitionViewSet, ParticipantViewSet, RegisterView, LoginView, LogoutView, UserSettingsView
 
 router = DefaultRouter()
+# This creates /competitions/ (List/Create) and /competitions/{id}/ (Retrieve/Update/Delete)
 router.register(r'competitions', CompetitionViewSet, basename='competition')
 router.register(r'participants', ParticipantViewSet, basename='participant')
 

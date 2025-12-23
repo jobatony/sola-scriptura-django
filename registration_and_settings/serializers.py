@@ -1,8 +1,6 @@
 from rest_framework import serializers
-from .models import Competition, Participant, UserSettings
-from django.contrib.auth.models import User
 from django.contrib.auth import get_user_model
-
+from .models import Competition, Participant, UserSettings
 
 User = get_user_model()
 
@@ -33,7 +31,7 @@ class ParticipantSerializer(serializers.ModelSerializer):
 
 class CompetitionSerializer(serializers.ModelSerializer):
     participant_count = serializers.IntegerField(source='participants.count', read_only=True)
-    # Allow creating participants directly when creating a competition
+    # This allows us to send a list of participants when creating a competition
     participants = ParticipantSerializer(many=True, required=False)
 
     class Meta:
@@ -43,12 +41,13 @@ class CompetitionSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         participants_data = validated_data.pop('participants', [])
-        # Get the user from the context (passed from the view)
+        # We get the user from the view's perform_create, but this is a safe fallback
         user = self.context['request'].user
         validated_data['created_by'] = user
         
         competition = Competition.objects.create(**validated_data)
         
+        # Create any initial participants passed with the competition
         for participant_data in participants_data:
             Participant.objects.create(competition=competition, **participant_data)
             

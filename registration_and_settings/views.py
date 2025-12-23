@@ -3,21 +3,20 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.decorators import action
 from django.shortcuts import get_object_or_404
-
-from rest_framework.authtoken.models import Token
-from .models import Competition, Participant, UserSettings
-from .serializers import CompetitionSerializer, ParticipantSerializer, UserSerializer, LoginSerializer, UserSettingsSerializer
-
 from django.contrib.auth import authenticate, login, logout
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
+
+# Import Token model
+from rest_framework.authtoken.models import Token
+
+from .models import Competition, Participant, UserSettings
+from .serializers import CompetitionSerializer, ParticipantSerializer, UserSerializer, LoginSerializer, UserSettingsSerializer
 
 class RegisterView(generics.CreateAPIView):
     serializer_class = UserSerializer
     permission_classes = [permissions.AllowAny]
 
-# Exempting CSRF for login to allow easy testing from external React app
-# In production, consider using DRF Tokens or passing the CSRF cookie
 @method_decorator(csrf_exempt, name='dispatch')
 class LoginView(APIView):
     permission_classes = [permissions.AllowAny]
@@ -31,12 +30,23 @@ class LoginView(APIView):
             )
             if user:
                 login(request, user)
-                return Response(UserSerializer(user).data)
+                # Generate or retrieve the token for this user
+                token, created = Token.objects.get_or_create(user=user)
+                
+                return Response({
+                    'token': token.key, # <--- Return this to React!
+                    'user': UserSerializer(user).data
+                })
             return Response({"error": "Invalid credentials"}, status=400)
         return Response(serializer.errors, status=400)
 
 class LogoutView(APIView):
     def post(self, request):
+        # Optional: Delete the token on logout to invalidate it
+        try:
+            request.user.auth_token.delete()
+        except (AttributeError, Token.DoesNotExist):
+            pass
         logout(request)
         return Response({"message": "Logged out successfully"})
 
@@ -46,6 +56,7 @@ class UserSettingsView(generics.RetrieveUpdateAPIView):
 
     def get_object(self):
         return UserSettings.objects.get_or_create(user=self.request.user)[0]
+
 class CompetitionViewSet(viewsets.ModelViewSet):
     """
     API endpoint that allows competitions to be viewed or edited.
@@ -64,7 +75,11 @@ class CompetitionViewSet(viewsets.ModelViewSet):
     def add_participants(self, request, pk=None):
         """Custom action to add participants to an existing competition"""
         competition = self.get_object()
-        serializer = ParticipantSerializer(data=request.data, many=True)
+        
+        # Check if data is a list (multiple) or dict (single)
+        is_many = isinstance(request.data, list)
+        
+        serializer = ParticipantSerializer(data=request.data, many=is_many)
         if serializer.is_valid():
             serializer.save(competition=competition)
             return Response(serializer.data, status=status.HTTP_201_CREATED)
