@@ -2,8 +2,9 @@ import random
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework import status
 from registration_and_settings.models import Participant, Competition
-from .models import GameTracker, BibleQuestion
+from .models import GameTracker, BibleQuestion, ParticipantResponse
 from django.shortcuts import get_object_or_404
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
@@ -97,3 +98,48 @@ def generate_questions(request):
     )
 
     return Response({'success': True, 'round': new_round_number})
+
+@api_view(['POST'])
+def submit_round_results(request):
+    data = request.data
+    
+    # Extract metadata
+    comp_id = data.get('competition_id')
+    round_num = data.get('round_number')
+    p_code = data.get('participant_code')
+    answers = data.get('answers', []) # List of objects
+
+    competition = get_object_or_404(Competition, id=comp_id)
+
+    responses_to_create = []
+
+    for item in answers:
+        q_id = item.get('question_id')
+        selected = item.get('selected_answer')
+        time_taken = item.get('time_taken')
+
+        # Query the actual question to check correctness
+        question_obj = get_object_or_404(BibleQuestion, id=q_id)
+        
+        # Check correctness (handles None if user didn't answer)
+        is_correct = (selected == question_obj.correct_book)
+
+        responses_to_create.append(ParticipantResponse(
+            competition=competition,
+            participant_access_code=p_code,
+            round_number=round_num,
+            question=question_obj,
+            # Ensure we don't save None to a CharField
+            selected_answer=selected if selected is not None else "SKIPPED", 
+            correct_answer_ref=question_obj.correct_book,
+            is_correct=is_correct,
+            time_taken=time_taken
+        ))
+
+    # Bulk create for efficiency
+    ParticipantResponse.objects.bulk_create(responses_to_create)
+
+    return Response(
+        {"status": "success", "message": f"Processed {len(responses_to_create)} answers"}, 
+        status=status.HTTP_201_CREATED
+    )

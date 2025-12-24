@@ -125,26 +125,52 @@ class CompetitionConsumer(AsyncWebsocketConsumer):
         try:
             data = json.loads(text_data)
         except json.JSONDecodeError:
-            return # Ignore malformed data
+            return
 
         # LOGIC: Moderator Commands
         if self.role == 'moderator':
-            # Broadcast the moderator's command to everyone (participants)
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'game_message',
-                    'message': data.get('type'), # e.g., 'start_game', 'next_question'
-                    'payload': data.get('payload')
-                }
-            )
+            msg_type = data.get('type')
+            
+            # 1. Translate "Trigger" to actual "Action"
+            if msg_type == 'start_round_trigger':
+                # Broadcast to everyone (including Mod) that round has started
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'game_message',
+                        'message': 'start_round',  # <--- matches UserLobby listener
+                        'payload': {}
+                    }
+                )
+            else:
+                # Pass through other messages
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'game_message',
+                        'message': msg_type,
+                        'payload': data.get('payload')
+                    }
+                )
         
         # LOGIC: Participant Messages (e.g. submitting answers)
         elif self.role == 'participant':
-            # Currently, we are not broadcasting participant answers to the whole group
-            # to prevent cheating. You would typically process the answer here 
-            # or send it specifically to the moderator.
-            pass
+            msg_type = data.get('type')
+            
+            if msg_type == 'player_ready':
+                # Broadcast that this specific player (self.identity) is ready
+                await self.channel_layer.group_send(
+                    self.room_group_name,
+                    {
+                        'type': 'game_message', # This routes to game_message() handler
+                        'message': 'player_ready_update', # The frontend listener type
+                        'payload': {
+                            'code': self.identity,   # The participant's access code
+                            'status': data.get('status', True)
+                        }
+                    }
+                )
+            # --- NEW CODE END ---
 
     # Handler for 'game_message' type sent via group_send
     async def game_message(self, event):

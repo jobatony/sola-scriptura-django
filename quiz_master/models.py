@@ -78,3 +78,21 @@ class GameTracker(models.Model):
 
     def __str__(self):
         return f"Comp {self.competition.id} - Round {self.round_number}"
+    
+class ParticipantResponse(models.Model):
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE)
+    participant_access_code = models.CharField(max_length=10)
+    round_number = models.IntegerField()
+    
+    question = models.ForeignKey(BibleQuestion, on_delete=models.CASCADE)
+    selected_answer = models.CharField(max_length=100)
+    
+    # Store validation results
+    is_correct = models.BooleanField(default=False)
+    correct_answer_ref = models.CharField(max_length=100) # Snapshot of what was correct
+    
+    time_taken = models.FloatField(help_text="Time in seconds")
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.participant_access_code} - R{self.round_number} - {self.is_correct}"
