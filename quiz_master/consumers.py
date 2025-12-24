@@ -1,22 +1,117 @@
 import json
-import random
 from channels.generic.websocket import AsyncWebsocketConsumer
+from urllib.parse import parse_qs
 from channels.db import database_sync_to_async
-from .models import BibleQuestion
-from registration_and_settings.models import Competition, Participant
+from .models import CompetitorState
+from registration_and_settings.models import Competition
 
 class CompetitionConsumer(AsyncWebsocketConsumer):
+
+    @database_sync_to_async
+    def register_participant_entry(self, competition_id, code):
+        """
+        Creates a CompetitorState record if it doesn't exist.
+        Returns the state object or None if competition is missing.
+        """
+        try:
+            competition = Competition.objects.get(id=competition_id)
+        except Competition.DoesNotExist:
+            return None
+
+        obj, created = CompetitorState.objects.get_or_create(
+            competition=competition,
+            participant_access_code=code,
+            defaults={'state': 'qualified'}
+        )
+        return obj
+
+    @database_sync_to_async
+    def get_active_participants(self, competition_id):
+        """ Fetch a list of access_codes for all QUALIFIED participants """
+        return list(CompetitorState.objects.filter(
+            competition_id=competition_id, 
+            state='qualified'
+        ).values_list('participant_access_code', flat=True))
+
     async def connect(self):
+        # 1. Get Competition ID and Setup Room Name
         self.competition_id = self.scope['url_route']['kwargs']['competition_id']
         self.room_group_name = f'competition_{self.competition_id}'
+        self.role = None
+        self.identity = None
 
-        # Join room group
-        await self.channel_layer.group_add(
-            self.room_group_name,
-            self.channel_name
-        )
+        # 2. Parse Query Parameters
+        query_string = self.scope['query_string'].decode()
+        params = parse_qs(query_string)
 
-        await self.accept()
+        # --- LOGIC A: IS IT A MODERATOR? ---
+        if 'token' in params:
+            # Note: In a production app, verify the token here.
+            self.role = 'moderator'
+            self.identity = 'Admin'
+            
+            # Add to group and accept immediately
+            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            await self.accept()
+            
+            print(f"✅ Moderator joined Room {self.competition_id}")
+
+            # Send the "Who is already here?" list to the Moderator only
+            existing_codes = await self.get_active_participants(self.competition_id)
+            await self.send(text_data=json.dumps({
+                'type': 'initial_state',
+                'active_players': existing_codes 
+            }))
+            return
+
+        # --- LOGIC B: IS IT A PARTICIPANT? ---
+        elif 'code' in params:
+            code = params['code'][0]
+            self.role = 'participant'
+            self.identity = code
+
+            # Verify Database State
+            competitor_state = await self.register_participant_entry(self.competition_id, code)
+
+            # Case 1: Competition doesn't exist
+            if not competitor_state:
+                print(f"❌ Connection rejected: Competition {self.competition_id} not found")
+                await self.close()
+                return
+
+            # Case 2: Player is Disqualified
+            if competitor_state.state == 'disqualified':
+                print(f"🚫 Connection Rejected: Participant {code} is DISQUALIFIED.")
+                # Accept momentarily to send the error message, then close
+                await self.accept()
+                await self.send(text_data=json.dumps({
+                    'type': 'error',
+                    'message': 'You have been disqualified from this competition.'
+                }))
+                await self.close()
+                return
+
+            # Case 3: Valid Player - Proceed to Join
+            print(f"✅ Participant {code} joined Room {self.competition_id}")
+            
+            # Add to group
+            await self.channel_layer.group_add(self.room_group_name, self.channel_name)
+            await self.accept()
+
+            # Broadcast 'player_joined' to the group (so Moderator sees it)
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'game_message',
+                    'message': 'player_joined',
+                    'payload': {'code': self.identity}
+                }
+            )
+
+        # --- LOGIC C: NO CREDENTIALS ---
+        else:
+            print("❌ Connection rejected: No credentials provided")
+            await self.close()
 
     async def disconnect(self, close_code):
         # Leave room group
@@ -27,137 +122,33 @@ class CompetitionConsumer(AsyncWebsocketConsumer):
 
     # Receive message from WebSocket
     async def receive(self, text_data):
-        data = json.loads(text_data)
-        action = data.get('action')
-
-        if action == 'participant_join':
-            # 1. Look for 'access_code' in the payload
-            access_code = data.get('access_code')
-            
-            # 2. Check if this is a moderator (bypass verification) or a participant
-            if data.get('is_moderator'):
-                await self.channel_layer.group_send(
-                    self.room_group_name,
-                    {
-                        'type': 'broadcast_participant',
-                        'name': "Moderator"
-                    }
-                )
-            elif access_code:
-                # 3. Verify the code against the database
-                participant = await self.verify_participant(access_code)
-                
-                if participant:
-                    # --- CHANGE START ---
-                    # Send direct confirmation to the user who joined
-                    await self.send(text_data=json.dumps({
-                        'type': 'join_success',
-                        'participant': {
-                            'name': participant.full_name,
-                            'id': participant.id
-                        }
-                    }))
-                    # --- CHANGE END ---
-
-                    # Success: Broadcast the real name from the DB
-                    await self.channel_layer.group_send(
-                        self.room_group_name,
-                        {
-                            'type': 'broadcast_participant',
-                            'name': participant.full_name
-                        }
-                    )
-                else:
-                    # Failure: Send error message back to this specific socket
-                    await self.send(text_data=json.dumps({
-                        'type': 'error',
-                        'message': 'Invalid access code or participant not found.'
-                    }))
-            else:
-                # Fallback or Error if no code provided
-                await self.send(text_data=json.dumps({
-                    'type': 'error',
-                    'message': 'Access code required.'
-                }))
-
-        elif action == 'generate_questions':
-            # Fetch random questions and send to everyone
-            questions = await self.get_random_questions(6)
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'send_questions',
-                    'questions': questions
-                }
-            )
-
-        elif action == 'start_round':
-            # Trigger the start for everyone
-            await self.channel_layer.group_send(
-                self.room_group_name,
-                {
-                    'type': 'start_game_round',
-                }
-            )
-
-    # Handlers for group messages
-    async def broadcast_participant(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'participant_update',
-            'name': event['name']
-        }))
-
-    async def send_questions(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'questions_ready',
-            'payload': event['questions']
-        }))
-
-    async def start_game_round(self, event):
-        await self.send(text_data=json.dumps({
-            'type': 'start_round'
-        }))
-
-    @database_sync_to_async
-    def verify_participant(self, access_code):
-        """
-        Verifies that the access code belongs to a participant 
-        registered for the current competition.
-        """
         try:
-            return Participant.objects.get(
-                access_code=access_code, 
-                competition_id=self.competition_id
+            data = json.loads(text_data)
+        except json.JSONDecodeError:
+            return # Ignore malformed data
+
+        # LOGIC: Moderator Commands
+        if self.role == 'moderator':
+            # Broadcast the moderator's command to everyone (participants)
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'game_message',
+                    'message': data.get('type'), # e.g., 'start_game', 'next_question'
+                    'payload': data.get('payload')
+                }
             )
-        except Participant.DoesNotExist:
-            return None
-
-    @database_sync_to_async
-    def get_random_questions(self, count):
-        # Logic to pick random BibleQuestions
-        # In a real scenario, you might want to filter by difficulty or tags
-        items = list(BibleQuestion.objects.all())
-        if len(items) < count:
-            selected = items # Or duplicate if not enough
-        else:
-            selected = random.sample(items, count)
         
-        # Serialize for frontend
-        return [
-            {
-                'id': q.id,
-                'verse_text': q.verse_text,
-                'options': self.shuffle_options(q)
-            }
-            for q in selected
-        ]
+        # LOGIC: Participant Messages (e.g. submitting answers)
+        elif self.role == 'participant':
+            # Currently, we are not broadcasting participant answers to the whole group
+            # to prevent cheating. You would typically process the answer here 
+            # or send it specifically to the moderator.
+            pass
 
-    def shuffle_options(self, question):
-        opts = [
-            {'text': question.correct_book, 'is_correct': True},
-            {'text': question.wrong_option_1, 'is_correct': False},
-            {'text': question.wrong_option_2, 'is_correct': False},
-            {'text': question.wrong_option_3, 'is_correct': False},
-        ]
-        random.shuffle(opts)
-        return opts
+    # Handler for 'game_message' type sent via group_send
+    async def game_message(self, event):
+        await self.send(text_data=json.dumps({
+            'type': event['message'],
+            'payload': event.get('payload')
+        }))

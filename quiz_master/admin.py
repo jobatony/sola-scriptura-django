@@ -1,4 +1,6 @@
 from django.contrib import admin
-from .models import BibleQuestion
+from .models import BibleQuestion, CompetitorState, GameTracker
 
 admin.site.register(BibleQuestion)
+admin.site.register(CompetitorState)  # Register Competition model for admin panel
+admin.site.register(GameTracker)

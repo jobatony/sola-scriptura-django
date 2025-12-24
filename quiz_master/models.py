@@ -1,5 +1,6 @@
 from django.db import models
 from django.contrib.auth.models import User
+from registration_and_settings.models import Competition
 
 # List of all 66 books of the Bible for dropdown choices
 BIBLE_BOOKS = [
@@ -31,3 +32,49 @@ class BibleQuestion(models.Model):
 
     def __str__(self):
         return f"{self.correct_book} {self.chapter}:{self.verse} (Q: {self.verse_text[:30]}...)"
+    
+
+class CompetitorState(models.Model):
+    STATE_CHOICES = [
+        ('qualified', 'Qualified'),
+        ('disqualified', 'Disqualified'),
+    ]
+
+    # We link to the specific Competition
+    competition = models.ForeignKey(
+        'registration_and_settings.Competition', 
+        on_delete=models.CASCADE,
+        related_name='competitor_states'
+    )
+    
+    # Unique identifier for the participant
+    participant_access_code = models.CharField(max_length=10)
+    
+    # The current status
+    state = models.CharField(
+        max_length=20, 
+        choices=STATE_CHOICES, 
+        default='qualified'
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        # Ensure a participant can't have duplicate states in the same competition
+        unique_together = ('competition', 'participant_access_code')
+
+    def __str__(self):
+        return f"{self.participant_access_code} - {self.state}"
+    
+class GameTracker(models.Model):
+    competition = models.ForeignKey(Competition, on_delete=models.CASCADE)
+    round_number = models.IntegerField()
+    # Stores [12, 45, 2, 8, 99, 101] - The exact IDs of the 6 questions
+    generated_questions = models.JSONField(default=list) 
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Comp {self.competition.id} - Round {self.round_number}"
