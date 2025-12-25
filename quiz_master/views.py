@@ -97,7 +97,7 @@ def generate_questions(request):
         }
     )
 
-    return Response({'success': True, 'round': new_round_number})
+    return Response({'success': True, 'round': new_round_number, 'questions': questions_data})
 
 @api_view(['POST'])
 def submit_round_results(request):
