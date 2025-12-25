@@ -126,19 +126,21 @@ class CompetitionConsumer(AsyncWebsocketConsumer):
             data = json.loads(text_data)
         except json.JSONDecodeError:
             return
+        
+        print(f"📡 [Server Received] Role: {self.role}, Type: {data.get('type')}, Room: {self.room_group_name}")
 
         # LOGIC: Moderator Commands
         if self.role == 'moderator':
             msg_type = data.get('type')
             
             # 1. Translate "Trigger" to actual "Action"
-            if msg_type == 'start_round_trigger':
+            if msg_type == 'start_round':
                 # Broadcast to everyone (including Mod) that round has started
                 await self.channel_layer.group_send(
                     self.room_group_name,
                     {
                         'type': 'game_message',
-                        'message': 'start_round',  # <--- matches UserLobby listener
+                        'message': 'start_round_trigger',  # <--- matches UserLobby listener
                         'payload': {}
                     }
                 )
